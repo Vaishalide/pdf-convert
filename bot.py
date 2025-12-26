@@ -8,33 +8,49 @@ import tempfile
 
 app = Flask(__name__)
 
+# Standard A4 size in points
+A4_WIDTH = 595
+A4_HEIGHT = 842
+
 def process_pdf_logic(input_path, output_path):
-    """Processes PDF page-by-page to keep memory usage low."""
+    """Whitens pages and merges 4 smaller pages onto one A4 sheet."""
     doc = fitz.open(input_path)
-    new_doc = fitz.open()  # Create a new empty PDF
+    new_doc = fitz.open()  # Target A4 PDF
+    
+    # Define the 4 slots on an A4 page (2x2 grid)
+    # Slot size: ~297x421 points
+    slots = [
+        fitz.Rect(0, 0, A4_WIDTH/2, A4_HEIGHT/2),         # Top-Left
+        fitz.Rect(A4_WIDTH/2, 0, A4_WIDTH, A4_HEIGHT/2),   # Top-Right
+        fitz.Rect(0, A4_HEIGHT/2, A4_WIDTH/2, A4_HEIGHT),   # Bottom-Left
+        fitz.Rect(A4_WIDTH/2, A4_HEIGHT/2, A4_WIDTH, A4_HEIGHT) # Bottom-Right
+    ]
 
-    for page_num in range(len(doc)):
-        page = doc.load_page(page_num)
-        
-        # matrix=1.0 is standard quality. Increase to 1.2 if text is blurry, 
-        # but 1.0 is safest for Heroku memory limits.
-        pix = page.get_pixmap(matrix=fitz.Matrix(1.0, 1.0))
+    current_a4_page = None
+    
+    for i in range(len(doc)):
+        # 1. Whiten the background
+        page = doc.load_page(i)
+        pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5)) # Higher DPI for better quality
         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-
-        # Background Removal Logic
+        
         gray_img = ImageOps.grayscale(img)
         binary_img = gray_img.point(lambda p: 255 if p > 160 else 0)
         
-        # Convert processed image to bytes
         img_byte_arr = io.BytesIO()
         binary_img.save(img_byte_arr, format='PNG')
         img_bytes = img_byte_arr.getvalue()
 
-        # Create new page in output PDF and insert the processed image
-        new_page = new_doc.new_page(width=pix.width, height=pix.height)
-        new_page.insert_image(new_page.rect, stream=img_bytes)
+        # 2. Merge onto A4
+        slot_index = i % 4
+        if slot_index == 0:
+            # Create a new A4 page every 4 input pages
+            current_a4_page = new_doc.new_page(width=A4_WIDTH, height=A4_HEIGHT)
+        
+        # Insert the whitened image into the current slot
+        current_a4_page.insert_image(slots[slot_index], stream=img_bytes)
 
-        # Explicitly clear memory for this page
+        # Cleanup memory for current iteration
         img_byte_arr.close()
         del pix, img, gray_img, binary_img, img_bytes
         gc.collect()
@@ -60,8 +76,8 @@ def convert():
         return "No selected file", 400
 
     temp_dir = tempfile.gettempdir()
-    input_path = os.path.join(temp_dir, f"upload_{file.filename}")
-    output_path = os.path.join(temp_dir, f"cleaned_{file.filename}")
+    input_path = os.path.join(temp_dir, f"in_{file.filename}")
+    output_path = os.path.join(temp_dir, f"a4_merged_{file.filename}")
     
     file.save(input_path)
 
@@ -74,13 +90,13 @@ def convert():
                 if os.path.exists(input_path): os.remove(input_path)
                 if os.path.exists(output_path): os.remove(output_path)
             except Exception as e:
-                print(f"Error cleaning up: {e}")
+                print(f"Cleanup error: {e}")
             return response
 
         return send_file(output_path, as_attachment=True)
 
     except Exception as e:
-        return f"Error: {str(e)}", 500
+        return f"Conversion error: {str(e)}", 500
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
