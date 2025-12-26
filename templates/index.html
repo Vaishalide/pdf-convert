@@ -3,20 +3,23 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF Background Remover</title>
+    <title>A4 PDF Merger & Background Whitener</title>
     <style>
-        body { font-family: sans-serif; text-align: center; padding-top: 50px; }
-        .container { border: 1px solid #ccc; padding: 20px; display: inline-block; border-radius: 8px; }
-        input { margin: 10px 0; }
+        body { font-family: sans-serif; text-align: center; padding-top: 50px; background-color: #f8f9fa; }
+        .container { border: 1px solid #dee2e6; padding: 30px; display: inline-block; border-radius: 10px; background: white; box-shadow: 0 4px 8px rgba(0,0,0,0.05); }
+        h2 { color: #343a40; }
+        .note { font-size: 0.9em; color: #6c757d; margin-bottom: 20px; }
+        button { background-color: #28a745; color: white; border: none; padding: 12px 24px; border-radius: 5px; cursor: pointer; font-size: 16px; }
+        button:hover { background-color: #218838; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h2>PDF Background Remover</h2>
-        <p>Upload a PDF with a colored background to get a printable white version.</p>
+        <h2>PDF Background Whitener & A4 Merger</h2>
+        <p class="note">This will whiten your PDF and merge 4 pages onto every single A4 sheet.</p>
         <form action="/convert" method="post" enctype="multipart/form-data">
-            <input type="file" name="file" accept=".pdf" required><br>
-            <button type="submit">Convert and Download</button>
+            <input type="file" name="file" accept=".pdf" required><br><br>
+            <button type="submit">Whiten, Merge & Download</button>
         </form>
     </div>
 </body>
