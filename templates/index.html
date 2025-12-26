@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Background Remover</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding-top: 50px; }
+        .container { border: 1px solid #ccc; padding: 20px; display: inline-block; border-radius: 8px; }
+        input { margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>PDF Background Remover</h2>
+        <p>Upload a PDF with a colored background to get a printable white version.</p>
+        <form action="/convert" method="post" enctype="multipart/form-data">
+            <input type="file" name="file" accept=".pdf" required><br>
+            <button type="submit">Convert and Download</button>
+        </form>
+    </div>
+</body>
+</html>
