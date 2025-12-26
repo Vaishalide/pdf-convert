@@ -1,83 +1,71 @@
 import os
 import fitz  # PyMuPDF
+from flask import Flask, render_template, request, send_file, after_this_request
 from PIL import Image, ImageOps
-from telegram import Update
-from telegram.ext import Application, MessageHandler, filters, ContextTypes
+import tempfile
 
-# Environment variables
-TOKEN = os.environ.get('TELEGRAM_TOKEN')
-# You must set this in Heroku Config Vars (e.g., https://your-app-name.herokuapp.com)
-HEROKU_APP_URL = os.environ.get('HEROKU_APP_URL')
-DOWNLOAD_DIR = '/tmp' 
+app = Flask(__name__)
 
-async def process_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message.document:
-        return
+def process_pdf_logic(input_path, output_path):
+    """Core logic adapted from the original bot.py"""
+    doc = fitz.open(input_path)
+    processed_images = []
 
-    file = await update.message.document.get_file()
-    # Clean the filename for safety
-    safe_name = "".join([c for c in update.message.document.file_name if c.isalnum() or c in "._-"])
-    input_path = os.path.join(DOWNLOAD_DIR, f"in_{safe_name}")
-    output_path = os.path.join(DOWNLOAD_DIR, f"white_bg_{safe_name}")
+    for page_num in range(len(doc)):
+        page = doc.load_page(page_num)
+        # 1.5 zoom for quality/memory balance
+        pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
-    status_msg = await update.message.reply_text("⏳ Processing your PDF. This may take a moment...")
-    await file.download_to_drive(input_path)
+        # Thresholding: Convert colors to White/Black
+        gray_img = ImageOps.grayscale(img)
+        binary_img = gray_img.point(lambda p: 255 if p > 160 else 0)
+        processed_images.append(binary_img.convert("RGB"))
+
+    if processed_images:
+        processed_images[0].save(
+            output_path, save_all=True, append_images=processed_images[1:]
+        )
+    doc.close()
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/convert', methods=['POST'])
+def convert():
+    if 'file' not in request.files:
+        return "No file uploaded", 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return "No selected file", 400
+
+    # Create temporary paths
+    temp_dir = tempfile.gettempdir()
+    input_path = os.path.join(temp_dir, f"upload_{file.filename}")
+    output_path = os.path.join(temp_dir, f"cleaned_{file.filename}")
+    
+    file.save(input_path)
 
     try:
-        doc = fitz.open(input_path)
-        processed_images = []
-
-        for page_num in range(len(doc)):
-            page = doc.load_page(page_num)
-            # 1.5 zoom provides good print quality while staying within Heroku's 512MB RAM limit
-            pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-
-            # Thresholding logic: convert background colors to white
-            gray_img = ImageOps.grayscale(img)
-            binary_img = gray_img.point(lambda p: 255 if p > 160 else 0)
-            processed_images.append(binary_img.convert("RGB"))
-
-        if processed_images:
-            processed_images[0].save(
-                output_path, save_all=True, append_images=processed_images[1:]
-            )
-            with open(output_path, 'rb') as f:
-                await update.message.reply_document(document=f)
+        process_pdf_logic(input_path, output_path)
         
-        await status_msg.delete()
+        @after_this_request
+        def cleanup(response):
+            try:
+                os.remove(input_path)
+                os.remove(output_path)
+            except Exception as e:
+                print(f"Error cleaning up: {e}")
+            return response
+
+        return send_file(output_path, as_attachment=True)
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Error: {str(e)}")
-    finally:
-        if 'doc' in locals(): doc.close()
-        for p in [input_path, output_path]:
-            if os.path.exists(p): os.remove(p)
-
-def main():
-    if not TOKEN:
-        print("Error: TELEGRAM_TOKEN not set.")
-        return
-    
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(MessageHandler(filters.Document.PDF, process_pdf))
-    
-    # Heroku assigns a dynamic port
-    PORT = int(os.environ.get('PORT', 8443))
-
-    if HEROKU_APP_URL:
-        # Use Webhooks (Required for 'web' dynos on Heroku)
-        print(f"Starting Webhook on port {PORT}...")
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path=TOKEN,
-            webhook_url=f"{HEROKU_APP_URL}/{TOKEN}"
-        )
-    else:
-        # Fallback to Polling if no URL is provided (for local testing)
-        print("Starting Polling...")
-        app.run_polling()
+        return f"Error: {str(e)}", 500
 
 if __name__ == '__main__':
-    main()
+    # Bind to PORT for Heroku
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
