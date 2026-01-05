@@ -1,7 +1,5 @@
 import os
 import fitz  # PyMuPDF
-import io
-import gc
 from flask import Flask, render_template, request, send_file, after_this_request, redirect, url_for
 from PIL import Image, ImageOps
 import tempfile
@@ -9,38 +7,25 @@ import tempfile
 app = Flask(__name__)
 
 def process_pdf_logic(input_path, output_path):
-    """Processes PDF page-by-page to keep memory usage low."""
+    """Processes PDF to remove colored backgrounds."""
     doc = fitz.open(input_path)
-    new_doc = fitz.open()  # Create a new empty PDF
+    processed_images = []
 
     for page_num in range(len(doc)):
         page = doc.load_page(page_num)
-        
-        # matrix=1.0 is standard quality. Increase to 1.2 if text is blurry, 
-        # but 1.0 is safest for Heroku memory limits.
-        pix = page.get_pixmap(matrix=fitz.Matrix(1.0, 1.0))
+        # Lowered to 1.2 to prevent Heroku Memory (RAM) crashes on large files
+        pix = page.get_pixmap(matrix=fitz.Matrix(1.2, 1.2))
         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
-        # Background Removal Logic
+        # Convert to Grayscale and apply threshold (160) to force background to white
         gray_img = ImageOps.grayscale(img)
         binary_img = gray_img.point(lambda p: 255 if p > 160 else 0)
-        
-        # Convert processed image to bytes
-        img_byte_arr = io.BytesIO()
-        binary_img.save(img_byte_arr, format='PNG')
-        img_bytes = img_byte_arr.getvalue()
+        processed_images.append(binary_img.convert("RGB"))
 
-        # Create new page in output PDF and insert the processed image
-        new_page = new_doc.new_page(width=pix.width, height=pix.height)
-        new_page.insert_image(new_page.rect, stream=img_bytes)
-
-        # Explicitly clear memory for this page
-        img_byte_arr.close()
-        del pix, img, gray_img, binary_img, img_bytes
-        gc.collect()
-
-    new_doc.save(output_path)
-    new_doc.close()
+    if processed_images:
+        processed_images[0].save(
+            output_path, save_all=True, append_images=processed_images[1:]
+        )
     doc.close()
 
 @app.route('/')
@@ -49,6 +34,7 @@ def index():
 
 @app.route('/convert', methods=['GET', 'POST'])
 def convert():
+    # If someone tries to visit /convert directly (GET), send them back home
     if request.method == 'GET':
         return redirect(url_for('index'))
     
@@ -59,6 +45,7 @@ def convert():
     if file.filename == '':
         return "No selected file", 400
 
+    # Create temporary paths for processing
     temp_dir = tempfile.gettempdir()
     input_path = os.path.join(temp_dir, f"upload_{file.filename}")
     output_path = os.path.join(temp_dir, f"cleaned_{file.filename}")
@@ -68,6 +55,7 @@ def convert():
     try:
         process_pdf_logic(input_path, output_path)
         
+        # Delete files from the server after the user downloads them
         @after_this_request
         def cleanup(response):
             try:
